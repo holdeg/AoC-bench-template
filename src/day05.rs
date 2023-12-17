@@ -1,29 +1,62 @@
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 
 use itertools::Itertools;
 
 use crate::Solution;
 
+#[derive(Default)]
 pub struct PiecewiseShiftMap {
-    mappings: HashSet<(u64, u64, i64)>,
+    /// Map of ranges to shifts / y-intercepts.
+    /// Ranges are half-open [x, y) (not including the upper limit).
+    /// E.g., the key-value pair (2, 5): 3 means
+    /// 2 -> 5, 3 -> 6, 4 -> 7.     
+    pieces: HashMap<[u64; 2], i64>,
 }
 
-impl FromIterator<(u64, u64, i64)> for PiecewiseShiftMap {
-    fn from_iter<T: IntoIterator<Item = (u64, u64, i64)>>(iter: T) -> Self {
+impl FromIterator<([u64; 2], i64)> for PiecewiseShiftMap {
+    fn from_iter<T: IntoIterator<Item = ([u64; 2], i64)>>(iter: T) -> Self {
         Self {
-            mappings: HashSet::from_iter(iter),
+            pieces: HashMap::from_iter(iter),
         }
     }
 }
 
 impl PiecewiseShiftMap {
     pub fn map(&self, source: u64) -> u64 {
-        for (start, range, shift) in &self.mappings {
-            if (start..&(start + range)).contains(&&source) {
+        for (range, shift) in self.pieces.iter() {
+            if (range[0]..range[1]).contains(&&source) {
                 return (source as i64 + shift).try_into().unwrap();
             }
         }
         return source;
+    }
+
+    /// Takes `f(x)` and produces `g(f(x))` (where `g(x)` is this
+    /// function).
+    pub fn compose(&self, f: &PiecewiseShiftMap) -> Self {
+        // Consider
+        //        |  0 <= x < 10 => x + 5
+        // f(x) = { 10 <= x < 15 => x - 10
+        //        |        other => x
+        // and
+        //        |  3 <= x < 5  => x - 2
+        // g(x) = {  1 <= x < 3  => x + 2
+        //        |        other => x
+        self.pieces
+            .keys()
+            .flatten()
+            .chain(f.pieces.keys().flatten()) // (0, 10, 10, 15, 1, 3, 3, 5)
+            .unique() // (0, 10, 15, 1, 3, 5)
+            .sorted() //(0, 1, 3, 5, 10, 15)
+            .map(|endpoint| {
+                (
+                    endpoint,
+                    self.map(f.map(*endpoint)) as i64 - *endpoint as i64,
+                )
+            })
+            .tuple_windows()
+            .map(|((start, shift), (end, _))| ([*start, *end], shift))
+            .collect()
     }
 }
 
@@ -31,7 +64,7 @@ impl PiecewiseShiftMap {
 pub struct Day05;
 
 impl Solution for Day05 {
-    type ParsedInput = (HashSet<u64>, HashSet<u64>, Vec<PiecewiseShiftMap>);
+    type ParsedInput = (HashSet<u64>, HashSet<u64>, PiecewiseShiftMap);
 
     fn parse_input(input_lines: &str) -> Self::ParsedInput {
         // Change the return type of this function by editing the ParsedInput type above.
@@ -49,13 +82,13 @@ impl Solution for Day05 {
             .map(str::parse::<u64>)
             .map(Result::unwrap)
             .collect();
-        let mut seed_ranges = seeds.clone().into_iter();
-        let mut seeds_2: HashSet<u64> = HashSet::default();
-        while let (Some(start), Some(range)) = (seed_ranges.next(), seed_ranges.next()) {
-            for seed in start..start + range {
-                seeds_2.insert(seed);
-            }
-        }
+        // let mut seed_ranges = seeds.clone().into_iter();
+        // let mut seeds_2: HashSet<u64> = HashSet::default();
+        // while let (Some(start), Some(range)) = (seed_ranges.next(), seed_ranges.next()) {
+        //     for seed in start..start + range {
+        //         seeds_2.insert(seed);
+        //     }
+        // }
         let maps = lines
             .group_by(|elt| *elt != "")
             .into_iter()
@@ -69,46 +102,32 @@ impl Solution for Day05 {
                             .map(str::parse::<u64>)
                             .map(Result::unwrap)
                             .collect::<Vec<_>>();
+                        // Input looks like: dest_start source_start range
                         (
-                            components[1],
-                            components[2],
+                            [components[1], components[1] + components[2]],
                             components[0] as i64 - components[1] as i64,
                         )
                     })
                     .collect()
             })
-            .collect();
-        (seeds, seeds_2, maps)
+            .fold(PiecewiseShiftMap::default(), |acc, f: PiecewiseShiftMap| {
+                f.compose(&acc)
+            });
+        (seeds.clone(), seeds.clone(), maps)
     }
 
     fn part_one(input: &mut Self::ParsedInput) -> String {
-        let (seeds, _, maps) = input;
+        let (seeds, _, composition) = input;
         seeds
             .clone()
             .into_iter()
-            .map(|mut seed| {
-                for map in maps.iter() {
-                    seed = map.map(seed);
-                }
-                seed
-            })
+            .map(|seed| composition.map(seed))
             .fold(u64::MAX, |acc, val| acc.min(val))
             .to_string()
     }
 
     fn part_two(input: &mut Self::ParsedInput) -> String {
-        let (_, seeds, maps) = input;
-        seeds
-            .clone()
-            .into_iter()
-            .map(|mut seed| {
-                for map in maps.iter() {
-                    seed = map.map(seed);
-                }
-                seed
-            })
-            .fold(u64::MAX, |acc, val| acc.min(val))
-            .to_string()
+        0.to_string()
     }
 }
 
